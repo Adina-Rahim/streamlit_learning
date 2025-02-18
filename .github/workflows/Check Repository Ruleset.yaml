@@ -36,13 +36,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_NAME: ${{ github.repository }}
         run: |
-          DEFAULT_BRANCH="development"
+          #DEFAULT_BRANCH="development"
           # Fetch default branch dynamically
-          #DEFAULT_BRANCH=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          #  -H "Accept: application/vnd.github+json" \
-          #  "https://api.github.com/repos/$REPO_NAME" | jq -r '.default_branch')
-          #echo "Default branch detected: $DEFAULT_BRANCH"
-          #echo "Fetching ruleset for repository: $REPO_NAME, branch: $DEFAULT_BRANCH..."
+          DEFAULT_BRANCH=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO_NAME" | jq -r '.default_branch')
+          echo "Default branch detected: $DEFAULT_BRANCH"
+          echo "Fetching ruleset for repository: $REPO_NAME, branch: $DEFAULT_BRANCH..."
         
           API_URL="https://api.github.com/repos/$REPO_NAME/rules/branches/$DEFAULT_BRANCH"
 
