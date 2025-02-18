@@ -1,0 +1,144 @@
+name: Check Repository Ruleset
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check-ruleset:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq (JSON processor)
+        run: sudo apt-get install -y jq
+
+      - name: Load Expected Ruleset
+        run: |
+          EXPECTED_RULESET_FILE=".github/Key Branch Protection Rules.json"
+          echo "Loading expected ruleset from $EXPECTED_RULESET_FILE..."
+          # Extract the "rules" array from the JSON file using jq
+          EXPECTED_RULESET=$(jq '.rules' "$EXPECTED_RULESET_FILE")
+          # Output the extracted rules
+          echo "$EXPECTED_RULESET" > expected_ruleset.json
+          # Optionally, print the extracted rules for debugging
+          cat expected_ruleset.json
+
+      - name: Fetch Repository Ruleset from GitHub API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          DEFAULT_BRANCH="main"
+          # Fetch default branch dynamically
+          #DEFAULT_BRANCH=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          #  -H "Accept: application/vnd.github+json" \
+          #  "https://api.github.com/repos/$REPO_NAME" | jq -r '.default_branch')
+          #echo "Default branch detected: $DEFAULT_BRANCH"
+          #echo "Fetching ruleset for repository: $REPO_NAME, branch: $DEFAULT_BRANCH..."
+        
+          API_URL="https://api.github.com/repos/$REPO_NAME/rules/branches/$DEFAULT_BRANCH"
+
+          echo "Fetching expected ruleset from $API_URL"
+
+          # Fetch the response and save it as 'ruleset_response.json'
+          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" "$API_URL")
+
+          # Save the API response to 'ruleset_response.json' file
+          echo "$RESPONSE" > ruleset_response.json
+          cat ruleset_response.json
+
+          # Output the raw response for debugging (optional)
+          echo "Raw API Response: $RESPONSE" > raw_response.json
+
+          # Check if the response is empty or not an array
+          RULESET_COUNT=$(echo "$RESPONSE" | jq length)
+          if [[ "$RULESET_COUNT" -eq 0 ]]; then
+            echo "No branch protection rules are found for repository $REPO_NAME on branch $DEFAULT_BRANCH."
+            echo "Please define branch protection rules for $REPO_NAME repository."
+            exit 1
+          fi
+
+      - name: Compare Rulesets
+        run: |
+          echo "Comparing fetched ruleset with expected ruleset..."
+          ACTUAL_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' ruleset_response.json)
+          EXPECTED_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' expected_ruleset.json)
+    
+          echo "Actual Rules: $ACTUAL_RULES"
+          echo "Expected Rules: $EXPECTED_RULES"
+    
+          if [[ -z "$ACTUAL_RULES" || -z "$EXPECTED_RULES" ]]; then
+            echo "Error: One of the rulesets is empty. Check API response."
+            exit 1
+          fi
+    
+          compare_rule() {
+              local rule_type=$1
+              local expected_rule=$2
+              local actual_rule=$3
+            
+              if [[ "$rule_type" == "pull_request" ]]; then
+                EXPECTED_PR_PARAMS=$(echo "$expected_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
+                ACTUAL_PR_PARAMS=$(echo "$actual_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
+            
+                EXPECTED_MERGE_METHODS=$(echo "$EXPECTED_PR_PARAMS" | jq -c 'if has("allowed_merge_methods") then .allowed_merge_methods | sort else [] end')
+                ACTUAL_MERGE_METHODS=$(echo "$ACTUAL_PR_PARAMS" | jq -c 'if has("allowed_merge_methods") then .allowed_merge_methods | sort else [] end')
+            
+                echo "Expected Merge Methods: $EXPECTED_MERGE_METHODS"
+                echo "Actual Merge Methods: $ACTUAL_MERGE_METHODS"
+            
+                if [[ "$EXPECTED_MERGE_METHODS" != "$ACTUAL_MERGE_METHODS" ]]; then
+                  echo " Pull request rule 'allowed_merge_methods' mismatch"
+                  echo "Expected: $EXPECTED_MERGE_METHODS"
+                  echo "Actual: $ACTUAL_MERGE_METHODS"
+                  return 1
+                fi
+            
+                if [[ "$EXPECTED_PR_PARAMS" != "$ACTUAL_PR_PARAMS" ]]; then
+                  echo " Pull request rule parameters mismatch"
+                  echo "Expected: $EXPECTED_PR_PARAMS"
+                  echo "Actual: $ACTUAL_PR_PARAMS"
+                  return 1
+                fi
+              fi
+            
+              if [[ "$expected_rule" != "$actual_rule" ]]; then
+                echo " Rule type mismatch: $rule_type"
+                echo "Expected: $expected_rule"
+                echo "Actual: $actual_rule"
+                return 1
+              fi
+              return 0
+            }
+    
+          MATCHED=true
+          for expected_rule in $(echo "$EXPECTED_RULES" | jq -c '.[]'); do
+            rule_type=$(echo "$expected_rule" | jq -r '.type')
+            actual_rule=$(echo "$ACTUAL_RULES" | jq -c --arg type "$rule_type" '.[] | select(.type == $type)')
+    
+            if [[ -z "$actual_rule" ]]; then
+              echo " Missing expected rule: $rule_type"
+              MATCHED=false
+              continue
+            fi
+    
+            if ! compare_rule "$rule_type" "$expected_rule" "$actual_rule"; then
+              MATCHED=false
+            fi
+          done
+    
+          if [[ "$MATCHED" == false ]]; then
+            echo " Ruleset mismatch found"
+            exit 1
+          else
+            echo " Ruleset matches"
+          fi
