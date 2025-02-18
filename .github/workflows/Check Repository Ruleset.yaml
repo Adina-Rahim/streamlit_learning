@@ -23,7 +23,7 @@ jobs:
       - name: Load Expected Ruleset
         run: |
           EXPECTED_RULESET_FILE=".github/Key Branch Protection Rules.json"
-          echo "Loading expected ruleset from $EXPECTED_RULESET_FILE..."
+          echo "Loading expected ruleset from $EXPECTED_RULESET_FILE."
           # Extract the "rules" array from the JSON file using jq
           EXPECTED_RULESET=$(jq '.rules' "$EXPECTED_RULESET_FILE")
           # Output the extracted rules
