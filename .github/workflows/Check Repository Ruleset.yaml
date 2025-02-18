@@ -36,7 +36,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_NAME: ${{ github.repository }}
         run: |
-          DEFAULT_BRANCH="development"
+          DEFAULT_BRANCH="main"
           # Fetch default branch dynamically
           #DEFAULT_BRANCH=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           #  -H "Accept: application/vnd.github+json" \
@@ -70,75 +70,88 @@ jobs:
       - name: Compare Rulesets
         run: |
           echo "Comparing fetched ruleset with expected ruleset..."
+          
+          # Load actual and expected rulesets using jq to extract only the necessary fields
           ACTUAL_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' ruleset_response.json)
           EXPECTED_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' expected_ruleset.json)
-    
+
           echo "Actual Rules: $ACTUAL_RULES"
           echo "Expected Rules: $EXPECTED_RULES"
-    
+
+          # Check if the fetched rulesets are empty or invalid
           if [[ -z "$ACTUAL_RULES" || -z "$EXPECTED_RULES" ]]; then
             echo "Error: One of the rulesets is empty. Check API response."
             exit 1
           fi
-    
+
+          # Function to compare rule parameters dynamically
           compare_rule() {
               local rule_type=$1
               local expected_rule=$2
               local actual_rule=$3
-            
+
+              # If the rule type is 'pull_request', compare the 'parameters' field
               if [[ "$rule_type" == "pull_request" ]]; then
                 EXPECTED_PR_PARAMS=$(echo "$expected_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
                 ACTUAL_PR_PARAMS=$(echo "$actual_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
-            
-                EXPECTED_MERGE_METHODS=$(echo "$EXPECTED_PR_PARAMS" | jq -c 'if has("allowed_merge_methods") then .allowed_merge_methods | sort else [] end')
-                ACTUAL_MERGE_METHODS=$(echo "$ACTUAL_PR_PARAMS" | jq -c 'if has("allowed_merge_methods") then .allowed_merge_methods | sort else [] end')
-            
-                echo "Expected Merge Methods: $EXPECTED_MERGE_METHODS"
-                echo "Actual Merge Methods: $ACTUAL_MERGE_METHODS"
-            
-                if [[ "$EXPECTED_MERGE_METHODS" != "$ACTUAL_MERGE_METHODS" ]]; then
-                  echo " Pull request rule 'allowed_merge_methods' mismatch"
-                  echo "Expected: $EXPECTED_MERGE_METHODS"
-                  echo "Actual: $ACTUAL_MERGE_METHODS"
-                  return 1
-                fi
-            
+
+                # Compare each parameter dynamically
+                for param in $(echo "$EXPECTED_PR_PARAMS" | jq -r 'keys[]'); do
+                  EXPECTED_PARAM_VALUE=$(echo "$EXPECTED_PR_PARAMS" | jq -r --arg param "$param" '.[$param]')
+                  ACTUAL_PARAM_VALUE=$(echo "$ACTUAL_PR_PARAMS" | jq -r --arg param "$param" '.[$param]')
+
+                  if [[ "$EXPECTED_PARAM_VALUE" != "$ACTUAL_PARAM_VALUE" ]]; then
+                    echo "Mismatch found in pull request parameter '$param':"
+                    echo "Expected: $EXPECTED_PARAM_VALUE"
+                    echo "Actual: $ACTUAL_PARAM_VALUE"
+                  fi
+                done
+
+                # If the parameters do not match, return false
                 if [[ "$EXPECTED_PR_PARAMS" != "$ACTUAL_PR_PARAMS" ]]; then
-                  echo " Pull request rule parameters mismatch"
+                  echo "Pull request rule parameters mismatch"
                   echo "Expected: $EXPECTED_PR_PARAMS"
                   echo "Actual: $ACTUAL_PR_PARAMS"
                   return 1
                 fi
               fi
-            
+
+              # If rule type or any other rules don't match, return false
               if [[ "$expected_rule" != "$actual_rule" ]]; then
-                echo " Rule type mismatch: $rule_type"
+                echo "Rule type mismatch: $rule_type"
                 echo "Expected: $expected_rule"
                 echo "Actual: $actual_rule"
                 return 1
               fi
+
               return 0
-            }
-    
+          }
+
+          # Set the flag for matching rules
           MATCHED=true
+
+          # Loop through each expected rule and compare it with the actual rule
           for expected_rule in $(echo "$EXPECTED_RULES" | jq -c '.[]'); do
             rule_type=$(echo "$expected_rule" | jq -r '.type')
             actual_rule=$(echo "$ACTUAL_RULES" | jq -c --arg type "$rule_type" '.[] | select(.type == $type)')
-    
+
+            # If no matching rule is found in actual rules, indicate missing rule
             if [[ -z "$actual_rule" ]]; then
-              echo " Missing expected rule: $rule_type"
+              echo "Missing expected rule: $rule_type"
               MATCHED=false
               continue
             fi
-    
+
+            # Compare the expected and actual rule using the compare_rule function
             if ! compare_rule "$rule_type" "$expected_rule" "$actual_rule"; then
               MATCHED=false
             fi
           done
-    
+
+          # If there were mismatches, exit with a failure message
           if [[ "$MATCHED" == false ]]; then
-            echo " Ruleset mismatch found"
+            echo "Ruleset mismatch found"
             exit 1
           else
-            echo " Ruleset matches"
+            echo "Ruleset matches"
           fi
