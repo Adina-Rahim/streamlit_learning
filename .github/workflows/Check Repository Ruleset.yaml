@@ -74,39 +74,47 @@ jobs:
           # Load actual and expected rulesets using jq to extract only the necessary fields
           ACTUAL_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' ruleset_response.json)
           EXPECTED_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' expected_ruleset.json)
-
+      
           echo "Actual Rules: $ACTUAL_RULES"
           echo "Expected Rules: $EXPECTED_RULES"
-
+      
           # Check if the fetched rulesets are empty or invalid
           if [[ -z "$ACTUAL_RULES" || -z "$EXPECTED_RULES" ]]; then
             echo "Error: One of the rulesets is empty. Check API response."
             exit 1
           fi
-
+      
           # Function to compare rule parameters dynamically
           compare_rule() {
               local rule_type=$1
               local expected_rule=$2
               local actual_rule=$3
-
+      
               # If the rule type is 'pull_request', compare the 'parameters' field
               if [[ "$rule_type" == "pull_request" ]]; then
                 EXPECTED_PR_PARAMS=$(echo "$expected_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
                 ACTUAL_PR_PARAMS=$(echo "$actual_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
-
+      
                 # Compare each parameter dynamically
                 for param in $(echo "$EXPECTED_PR_PARAMS" | jq -r 'keys[]'); do
                   EXPECTED_PARAM_VALUE=$(echo "$EXPECTED_PR_PARAMS" | jq -r --arg param "$param" '.[$param]')
                   ACTUAL_PARAM_VALUE=$(echo "$ACTUAL_PR_PARAMS" | jq -r --arg param "$param" '.[$param]')
-
+      
                   if [[ "$EXPECTED_PARAM_VALUE" != "$ACTUAL_PARAM_VALUE" ]]; then
                     echo "Mismatch found in pull request parameter '$param':"
                     echo "Expected: $EXPECTED_PARAM_VALUE"
                     echo "Actual: $ACTUAL_PARAM_VALUE"
                   fi
                 done
-
+      
+                # Check for unexpected parameters in the actual rule
+                for param in $(echo "$ACTUAL_PR_PARAMS" | jq -r 'keys[]'); do
+                  if [[ "$param" != "required_approving_review_count" && "$param" != "dismiss_stale_reviews_on_push" && "$param" != "require_code_owner_review" && "$param" != "require_last_push_approval" && "$param" != "required_review_thread_resolution" && "$param" != "allowed_merge_methods" ]]; then
+                    echo "Unexpected parameter '$param' found in actual rule:"
+                    echo "Actual: $(echo "$ACTUAL_PR_PARAMS" | jq -r --arg param "$param" '.[$param]')"
+                  fi
+                done
+      
                 # If the parameters do not match, return false
                 if [[ "$EXPECTED_PR_PARAMS" != "$ACTUAL_PR_PARAMS" ]]; then
                   echo "Pull request rule parameters mismatch"
@@ -115,7 +123,7 @@ jobs:
                   return 1
                 fi
               fi
-
+      
               # If rule type or any other rules don't match, return false
               if [[ "$expected_rule" != "$actual_rule" ]]; then
                 echo "Rule type mismatch: $rule_type"
@@ -123,31 +131,31 @@ jobs:
                 echo "Actual: $actual_rule"
                 return 1
               fi
-
+      
               return 0
           }
-
+      
           # Set the flag for matching rules
           MATCHED=true
-
+      
           # Loop through each expected rule and compare it with the actual rule
           for expected_rule in $(echo "$EXPECTED_RULES" | jq -c '.[]'); do
             rule_type=$(echo "$expected_rule" | jq -r '.type')
             actual_rule=$(echo "$ACTUAL_RULES" | jq -c --arg type "$rule_type" '.[] | select(.type == $type)')
-
+      
             # If no matching rule is found in actual rules, indicate missing rule
             if [[ -z "$actual_rule" ]]; then
               echo "Missing expected rule: $rule_type"
               MATCHED=false
               continue
             fi
-
+      
             # Compare the expected and actual rule using the compare_rule function
             if ! compare_rule "$rule_type" "$expected_rule" "$actual_rule"; then
               MATCHED=false
             fi
           done
-
+      
           # If there were mismatches, exit with a failure message
           if [[ "$MATCHED" == false ]]; then
             echo "Ruleset mismatch found"
