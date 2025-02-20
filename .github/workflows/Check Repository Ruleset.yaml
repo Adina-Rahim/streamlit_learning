@@ -69,7 +69,7 @@ jobs:
 
       - name: Compare Rulesets
         run: |
-          echo "Comparing fetched ruleset with expected ruleset..."
+          echo "Comparing fetched ruleset with expected ruleset.."
           
           # Load actual and expected rulesets using jq to extract only the necessary fields
           ACTUAL_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' ruleset_response.json)
