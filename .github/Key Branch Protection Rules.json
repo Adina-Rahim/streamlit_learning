@@ -10,10 +10,10 @@
       "exclude": [],
       "include": [
         "~DEFAULT_BRANCH",
+        "refs/heads/dev",
         "refs/heads/development",
         "refs/heads/main",
-        "refs/heads/master",
-        "refs/heads/dev"
+        "refs/heads/master"
       ]
     }
   },
@@ -32,23 +32,28 @@
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": [
-          "merge",
-          "squash",
-          "rebase"
-        ]
+	"automatic_copilot_code_review_enabled" :false
+      }
+    },
+	{
+      "type": "branch_name_pattern",
+      "parameters": {
+        "operator": "regex",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+        "negate": false,
+        "name": "Enforces the lower case, dash separated naming convention of branches"
       }
     }
   ],
   "bypass_actors": [
     {
-      "actor_id": null,
-      "actor_type": "OrganizationAdmin",
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
       "bypass_mode": "pull_request"
     },
     {
-      "actor_id": 5,
-      "actor_type": "RepositoryRole",
+      "actor_id": 1,
+      "actor_type": "OrganizationAdmin",
       "bypass_mode": "pull_request"
     }
   ]

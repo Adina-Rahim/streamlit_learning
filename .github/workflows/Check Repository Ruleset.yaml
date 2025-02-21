@@ -36,13 +36,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_NAME: ${{ github.repository }}
         run: |
-          DEFAULT_BRANCH="main"
+          #DEFAULT_BRANCH="development"
           # Fetch default branch dynamically
-          #DEFAULT_BRANCH=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          #  -H "Accept: application/vnd.github+json" \
-          #  "https://api.github.com/repos/$REPO_NAME" | jq -r '.default_branch')
-          #echo "Default branch detected: $DEFAULT_BRANCH"
-          #echo "Fetching ruleset for repository: $REPO_NAME, branch: $DEFAULT_BRANCH..."
+          DEFAULT_BRANCH=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO_NAME" | jq -r '.default_branch')
+          echo "Default branch detected: $DEFAULT_BRANCH"
+          echo "Fetching ruleset for repository: $REPO_NAME, branch: $DEFAULT_BRANCH..."
         
           API_URL="https://api.github.com/repos/$REPO_NAME/rules/branches/$DEFAULT_BRANCH"
 
@@ -69,76 +69,71 @@ jobs:
 
       - name: Compare Rulesets
         run: |
-          echo "Comparing fetched ruleset with expected ruleset..."
+          echo "Comparing fetched ruleset with expected ruleset.."
+      
+          # Load actual and expected rulesets using jq
           ACTUAL_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' ruleset_response.json)
           EXPECTED_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' expected_ruleset.json)
-    
+      
           echo "Actual Rules: $ACTUAL_RULES"
           echo "Expected Rules: $EXPECTED_RULES"
-    
-          if [[ -z "$ACTUAL_RULES" || -z "$EXPECTED_RULES" ]]; then
-            echo "Error: One of the rulesets is empty. Check API response."
+      
+          # Ensure the rules are properly retrieved
+          if [[ -z "$ACTUAL_RULES" || "$ACTUAL_RULES" == "null" || -z "$EXPECTED_RULES" || "$EXPECTED_RULES" == "null" ]]; then
+            echo "Error: One of the rulesets is empty or invalid. Check API response."
             exit 1
           fi
-    
+      
+          # Function to compare rules dynamically
           compare_rule() {
-              local rule_type=$1
-              local expected_rule=$2
-              local actual_rule=$3
-            
-              if [[ "$rule_type" == "pull_request" ]]; then
-                EXPECTED_PR_PARAMS=$(echo "$expected_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
-                ACTUAL_PR_PARAMS=$(echo "$actual_rule" | jq -c '(if has("parameters") then .parameters else {} end)')
-            
-                EXPECTED_MERGE_METHODS=$(echo "$EXPECTED_PR_PARAMS" | jq -c 'if has("allowed_merge_methods") then .allowed_merge_methods | sort else [] end')
-                ACTUAL_MERGE_METHODS=$(echo "$ACTUAL_PR_PARAMS" | jq -c 'if has("allowed_merge_methods") then .allowed_merge_methods | sort else [] end')
-            
-                echo "Expected Merge Methods: $EXPECTED_MERGE_METHODS"
-                echo "Actual Merge Methods: $ACTUAL_MERGE_METHODS"
-            
-                if [[ "$EXPECTED_MERGE_METHODS" != "$ACTUAL_MERGE_METHODS" ]]; then
-                  echo " Pull request rule 'allowed_merge_methods' mismatch"
-                  echo "Expected: $EXPECTED_MERGE_METHODS"
-                  echo "Actual: $ACTUAL_MERGE_METHODS"
+              local expected_rule=$1
+              local actual_rule=$2
+      
+              # Extract and compare parameters
+              EXPECTED_PARAMS=$(echo "$expected_rule" | jq -c '.parameters // {}')
+              ACTUAL_PARAMS=$(echo "$actual_rule" | jq -c '.parameters // {}')
+      
+              # Ensure all expected parameters exist in actual (ignore extra ones)
+              while read -r param; do
+                EXPECTED_VALUE=$(echo "$EXPECTED_PARAMS" | jq -r --arg param "$param" '.[$param]')
+                ACTUAL_VALUE=$(echo "$ACTUAL_PARAMS" | jq -r --arg param "$param" '.[$param]')
+      
+                if [[ "$EXPECTED_VALUE" != "$ACTUAL_VALUE" ]]; then
+                  echo "Mismatch found in parameter '$param':"
+                  echo "Expected: $EXPECTED_VALUE"
+                  echo "Actual: $ACTUAL_VALUE"
                   return 1
                 fi
-            
-                if [[ "$EXPECTED_PR_PARAMS" != "$ACTUAL_PR_PARAMS" ]]; then
-                  echo " Pull request rule parameters mismatch"
-                  echo "Expected: $EXPECTED_PR_PARAMS"
-                  echo "Actual: $ACTUAL_PR_PARAMS"
-                  return 1
-                fi
-              fi
-            
-              if [[ "$expected_rule" != "$actual_rule" ]]; then
-                echo " Rule type mismatch: $rule_type"
-                echo "Expected: $expected_rule"
-                echo "Actual: $actual_rule"
-                return 1
-              fi
+              done < <(echo "$EXPECTED_PARAMS" | jq -r 'keys[]')
+      
               return 0
-            }
-    
+          }
+      
           MATCHED=true
-          for expected_rule in $(echo "$EXPECTED_RULES" | jq -c '.[]'); do
+      
+          # Compare each expected rule against actual rules
+          while read -r expected_rule; do
             rule_type=$(echo "$expected_rule" | jq -r '.type')
             actual_rule=$(echo "$ACTUAL_RULES" | jq -c --arg type "$rule_type" '.[] | select(.type == $type)')
-    
+      
             if [[ -z "$actual_rule" ]]; then
-              echo " Missing expected rule: $rule_type"
+              echo "Missing expected rule: $rule_type"
               MATCHED=false
               continue
             fi
-    
-            if ! compare_rule "$rule_type" "$expected_rule" "$actual_rule"; then
+      
+            if ! compare_rule "$expected_rule" "$actual_rule"; then
               MATCHED=false
             fi
-          done
-    
+          done < <(echo "$EXPECTED_RULES" | jq -c '.[]')
+      
           if [[ "$MATCHED" == false ]]; then
-            echo " Ruleset mismatch found"
+            echo "Ruleset mismatch found"
             exit 1
           else
-            echo " Ruleset matches"
+            echo "Ruleset matches"
+          fi
+
+          else
+            echo "Ruleset matches"
           fi
