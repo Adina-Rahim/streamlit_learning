@@ -71,16 +71,16 @@ jobs:
         run: |
           echo "Comparing fetched ruleset with expected ruleset.."
       
-          # Load actual and expected rulesets using jq to extract relevant fields
+          # Load actual and expected rulesets using jq
           ACTUAL_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' ruleset_response.json)
           EXPECTED_RULES=$(jq -c 'map({type, parameters: (if has("parameters") then .parameters else {} end)})' expected_ruleset.json)
       
           echo "Actual Rules: $ACTUAL_RULES"
           echo "Expected Rules: $EXPECTED_RULES"
       
-          # Check if the fetched rulesets are empty or invalid
-          if [[ -z "$ACTUAL_RULES" || -z "$EXPECTED_RULES" ]]; then
-            echo "Error: One of the rulesets is empty. Check API response."
+          # Ensure the rules are properly retrieved
+          if [[ -z "$ACTUAL_RULES" || "$ACTUAL_RULES" == "null" || -z "$EXPECTED_RULES" || "$EXPECTED_RULES" == "null" ]]; then
+            echo "Error: One of the rulesets is empty or invalid. Check API response."
             exit 1
           fi
       
@@ -89,12 +89,12 @@ jobs:
               local expected_rule=$1
               local actual_rule=$2
       
-              # Extract and compare parameters if present
-              EXPECTED_PARAMS=$(echo "$expected_rule" | jq -c '.parameters')
-              ACTUAL_PARAMS=$(echo "$actual_rule" | jq -c '.parameters')
+              # Extract and compare parameters
+              EXPECTED_PARAMS=$(echo "$expected_rule" | jq -c '.parameters // {}')
+              ACTUAL_PARAMS=$(echo "$actual_rule" | jq -c '.parameters // {}')
       
-              # Check if expected parameters exist in actual; ignore extra parameters
-              for param in $(echo "$EXPECTED_PARAMS" | jq -r 'keys[]'); do
+              # Ensure all expected parameters exist in actual (ignore extra ones)
+              while read -r param; do
                 EXPECTED_VALUE=$(echo "$EXPECTED_PARAMS" | jq -r --arg param "$param" '.[$param]')
                 ACTUAL_VALUE=$(echo "$ACTUAL_PARAMS" | jq -r --arg param "$param" '.[$param]')
       
@@ -104,36 +104,36 @@ jobs:
                   echo "Actual: $ACTUAL_VALUE"
                   return 1
                 fi
-              done
+              done < <(echo "$EXPECTED_PARAMS" | jq -r 'keys[]')
       
               return 0
           }
       
-          # Set flag for matching rules
           MATCHED=true
       
-          # Loop through each expected rule and compare with actual rules
-          for expected_rule in $(echo "$EXPECTED_RULES" | jq -c '.[]'); do
+          # Compare each expected rule against actual rules
+          while read -r expected_rule; do
             rule_type=$(echo "$expected_rule" | jq -r '.type')
             actual_rule=$(echo "$ACTUAL_RULES" | jq -c --arg type "$rule_type" '.[] | select(.type == $type)')
       
-            # If expected rule is missing in actual, report and fail
             if [[ -z "$actual_rule" ]]; then
               echo "Missing expected rule: $rule_type"
               MATCHED=false
               continue
             fi
       
-            # Compare expected and actual rule
             if ! compare_rule "$expected_rule" "$actual_rule"; then
               MATCHED=false
             fi
-          done
+          done < <(echo "$EXPECTED_RULES" | jq -c '.[]')
       
-          # Exit with error if mismatches found
           if [[ "$MATCHED" == false ]]; then
             echo "Ruleset mismatch found"
             exit 1
+          else
+            echo "Ruleset matches"
+          fi
+
           else
             echo "Ruleset matches"
           fi
